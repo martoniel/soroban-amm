@@ -924,7 +924,7 @@ dependencies = [
  "factory",
  "governance",
  "incentive_campaigns",
- "pol_vesting",
+ "oracle_aggregator",
  "soroban-sdk",
  "staking",
  "token",
