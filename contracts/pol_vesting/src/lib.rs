@@ -412,7 +412,9 @@ impl PolVestingContract {
             .checked_sub(releasable)
             .filter(|c| *c >= 0)
             .expect("pol_vesting: committed underflow - invariant violated");
-        env.storage().persistent().set(&committed_key, &new_committed);
+        env.storage()
+            .persistent()
+            .set(&committed_key, &new_committed);
         env.storage()
             .persistent()
             .extend_ttl(&committed_key, MIN_TTL, BUMP_TO);
@@ -583,9 +585,7 @@ impl PolVestingContract {
             .persistent()
             .get(&new_list_key)
             .unwrap_or(Vec::new(&env));
-        if old_beneficiary != new_beneficiary
-            && new_ids.len() >= MAX_SCHEDULES_PER_BENEFICIARY
-        {
+        if old_beneficiary != new_beneficiary && new_ids.len() >= MAX_SCHEDULES_PER_BENEFICIARY {
             return Err(VestingError::TooManySchedules);
         }
 
@@ -690,7 +690,9 @@ impl PolVestingContract {
             .checked_sub(remaining)
             .filter(|c| *c >= 0)
             .expect("pol_vesting: committed underflow - invariant violated");
-        env.storage().persistent().set(&committed_key, &new_committed);
+        env.storage()
+            .persistent()
+            .set(&committed_key, &new_committed);
         env.storage()
             .persistent()
             .extend_ttl(&committed_key, MIN_TTL, BUMP_TO);
@@ -1630,7 +1632,8 @@ mod tests {
         for sched in page0.iter() {
             all_ids.push_back(sched.schedule_id);
         }
-        let page1 = client.list_schedules(&s.beneficiary, &MAX_PAGE, &MAX_SCHEDULES_PER_BENEFICIARY);
+        let page1 =
+            client.list_schedules(&s.beneficiary, &MAX_PAGE, &MAX_SCHEDULES_PER_BENEFICIARY);
         for sched in page1.iter() {
             all_ids.push_back(sched.schedule_id);
         }
