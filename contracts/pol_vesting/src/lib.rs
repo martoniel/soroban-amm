@@ -398,11 +398,21 @@ impl PolVestingContract {
         env.storage().persistent().set(&key, &schedule);
 
         // Releasing tokens pays them out and therefore un-commits them.
+        //
+        // `i128` subtraction only traps on overflow past the type's range, not
+        // on crossing zero, so a plain `-` (or `saturating_sub`, which behaves
+        // identically here) would silently let `committed` go negative if this
+        // invariant were ever violated by a bug elsewhere — and a negative
+        // `committed` would then *inflate* `create_vesting`'s `balance -
+        // committed` affordability check instead of being caught. Trap loudly
+        // instead.
         let committed_key = DataKey::Committed(schedule.lp_token.clone());
         let committed = Self::read_committed(&env, &schedule.lp_token);
-        env.storage()
-            .persistent()
-            .set(&committed_key, &committed.saturating_sub(releasable));
+        let new_committed = committed
+            .checked_sub(releasable)
+            .filter(|c| *c >= 0)
+            .expect("pol_vesting: committed underflow - invariant violated");
+        env.storage().persistent().set(&committed_key, &new_committed);
         env.storage()
             .persistent()
             .extend_ttl(&committed_key, MIN_TTL, BUMP_TO);
@@ -670,13 +680,17 @@ impl PolVestingContract {
             lp.transfer(&contract_addr, &treasury, &to_treasury);
         }
 
-        // The unreleased remainder leaves the commitment book with the schedule.
+        // The unreleased remainder leaves the commitment book with the
+        // schedule. See the matching comment in `release` for why this must
+        // trap on underflow rather than saturate.
         let committed_key = DataKey::Committed(schedule.lp_token.clone());
         let committed = Self::read_committed(&env, &schedule.lp_token);
         let remaining = schedule.total - schedule.released;
-        env.storage()
-            .persistent()
-            .set(&committed_key, &committed.saturating_sub(remaining));
+        let new_committed = committed
+            .checked_sub(remaining)
+            .filter(|c| *c >= 0)
+            .expect("pol_vesting: committed underflow - invariant violated");
+        env.storage().persistent().set(&committed_key, &new_committed);
         env.storage()
             .persistent()
             .extend_ttl(&committed_key, MIN_TTL, BUMP_TO);
@@ -1510,6 +1524,47 @@ mod tests {
         s.env.ledger().set_sequence_number(1000);
         client.release(&s.beneficiary, &id);
         assert_eq!(client.committed(&s.lp_token), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "pol_vesting: committed underflow")]
+    fn test_release_traps_instead_of_silently_corrupting_committed() {
+        // `committed` should never fall below what `release` is about to
+        // subtract from it — if it ever does (a bug elsewhere in the
+        // commitment bookkeeping), the subtraction must trap rather than
+        // silently write a negative `committed`, which would then inflate
+        // `create_vesting`'s `balance - committed` affordability check.
+        let s = setup();
+        let id = create_schedule(&s, 0, 0, 1000);
+
+        s.env.as_contract(&s.contract_id, || {
+            s.env
+                .storage()
+                .persistent()
+                .set(&DataKey::Committed(s.lp_token.clone()), &0i128);
+        });
+
+        s.env.ledger().set_sequence_number(500);
+        let client = PolVestingContractClient::new(&s.env, &s.contract_id);
+        client.release(&s.beneficiary, &id);
+    }
+
+    #[test]
+    #[should_panic(expected = "pol_vesting: committed underflow")]
+    fn test_revoke_traps_instead_of_silently_corrupting_committed() {
+        let s = setup();
+        let id = create_schedule(&s, 0, 0, 1000);
+
+        s.env.as_contract(&s.contract_id, || {
+            s.env
+                .storage()
+                .persistent()
+                .set(&DataKey::Committed(s.lp_token.clone()), &0i128);
+        });
+
+        s.env.ledger().set_sequence_number(250);
+        let client = PolVestingContractClient::new(&s.env, &s.contract_id);
+        client.revoke_vesting(&s.governance, &s.beneficiary, &id);
     }
 
     #[test]
