@@ -573,7 +573,9 @@ impl PolVestingContract {
             .persistent()
             .get(&new_list_key)
             .unwrap_or(Vec::new(&env));
-        if new_ids.len() >= MAX_SCHEDULES_PER_BENEFICIARY {
+        if old_beneficiary != new_beneficiary
+            && new_ids.len() >= MAX_SCHEDULES_PER_BENEFICIARY
+        {
             return Err(VestingError::TooManySchedules);
         }
 
@@ -1547,17 +1549,28 @@ mod tests {
 
     #[test]
     fn test_change_beneficiary_to_same_beneficiary_does_not_duplicate() {
-        let s = setup();
+        let s = setup_funded(0);
+        mint_to_contract(&s, i128::from(MAX_SCHEDULES_PER_BENEFICIARY));
         let client = PolVestingContractClient::new(&s.env, &s.contract_id);
-        let id = create_schedule(&s, 0, 0, 1000);
+        let id = create(&s, &s.beneficiary, &s.lp_token, 1, 0, 0, 1000).unwrap();
+        for _ in 1..MAX_SCHEDULES_PER_BENEFICIARY {
+            create(&s, &s.beneficiary, &s.lp_token, 1, 0, 0, 1000).unwrap();
+        }
+        assert_eq!(
+            client.schedule_count(&s.beneficiary),
+            MAX_SCHEDULES_PER_BENEFICIARY
+        );
 
-        // Source and destination coincide: the old id must not be resurrected.
+        // Moving within the same beneficiary preserves the count, even at cap.
         let new_id = client.change_beneficiary(&s.governance, &s.beneficiary, &id, &s.beneficiary);
 
-        assert_eq!(client.schedule_count(&s.beneficiary), 1);
-        let listed = client.list_schedules(&s.beneficiary, &0, &10);
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed.get(0).unwrap().schedule_id, new_id);
+        assert_eq!(
+            client.schedule_count(&s.beneficiary),
+            MAX_SCHEDULES_PER_BENEFICIARY
+        );
+        let listed = client.list_schedules(&s.beneficiary, &0, &MAX_SCHEDULES_PER_BENEFICIARY);
+        assert_eq!(listed.len(), MAX_SCHEDULES_PER_BENEFICIARY);
+        assert!(listed.iter().any(|schedule| schedule.schedule_id == new_id));
         // The stale id is gone.
         assert_eq!(
             client
